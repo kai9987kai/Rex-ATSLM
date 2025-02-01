@@ -24,7 +24,7 @@
       display: flex;
       flex-direction: column;
     }
-    /* Chat container occupies most of the left side */
+    /* Chat container (left side) */
     #chatContainer {
       flex: 1;
       overflow-y: auto;
@@ -32,19 +32,18 @@
       background: var(--secondary-bg);
       position: relative;
     }
-    /* Chat log area with room for the step bar */
     #chatLog {
       max-height: calc(100% - 2rem);
       overflow-y: auto;
     }
-    /* Step bar placed at the bottom of chat container */
+    /* Step bar at bottom of chat container */
     #stepBar {
       padding: 0.5rem;
       text-align: center;
       background: var(--primary-bg);
       border-top: 1px solid #3d3d3d;
     }
-    /* Prompt bar (input area) – contains only the input and send button */
+    /* Prompt bar – only input and send button */
     #inputContainer {
       display: flex;
       gap: 0.3rem;
@@ -70,7 +69,7 @@
       transition: opacity 0.2s;
     }
     #sendButton:hover { opacity: 0.9; }
-    /* Fixed panels: controls on the right, info panel (loss chart & step count) below controls, performance panel at bottom right */
+    /* Fixed panels */
     #controls, #infoPanel, #performancePanel {
       position: fixed;
       background: rgba(0,0,0,0.8);
@@ -103,7 +102,7 @@
       right: 1rem;
       width: 280px;
     }
-    /* Style for feedback buttons */
+    /* Feedback buttons style */
     .feedbackBtn {
       background: transparent;
       border: none;
@@ -143,115 +142,69 @@
   <div id="performancePanel"></div>
   
   <script>
-    (async function(){
-      // Set the backend to webgl for better performance.
-      await tf.setBackend('webgl');
-      console.log("Backend set to:", tf.getBackend());
+    (function(){
+      // Use the WebGL backend explicitly for GPU acceleration.
+      tf.setBackend('webgl');
 
-      // Wrap all code in an IIFE to avoid global namespace conflicts.
-
-      // Define responses only once.
-      const responses = [
-        "Here's a joke: ",
-        "Here's some advice: ",
-        "Here's a quote: ",
-        "Did you know? ",
-        "I see. Could you tell me more?",
-        "That's fascinating!",
-        "I'm learning—tell me more.",
-        "Let's change the topic. What else is on your mind?"
-      ];
-
-      // Chat UI elements.
-      const chatLog = document.getElementById("chatLog");
-      const userInput = document.getElementById("userInput");
-      const sendButton = document.getElementById("sendButton");
-      const stepBar = document.getElementById("stepBar");
-      const performancePanel = document.getElementById("performancePanel");
-
-      // Loss chart setup.
-      const lossChartCtx = document.getElementById("lossChart").getContext("2d");
-      const lossChart = new Chart(lossChartCtx, {
-        type: 'line',
-        data: {
-          labels: [],
-          datasets: [{
-            label: 'Training Loss',
-            data: [],
-            borderColor: 'rgba(74,144,226,1)',
-            backgroundColor: 'rgba(74,144,226,0.2)',
-            fill: true,
-            tension: 0.1
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: { x: { display: false }, y: { beginAtZero: true } }
-        }
-      });
-
-      // Global simulation speed.
-      let simulationSpeed = 1;
-
-      // Public API functions.
-      async function fetchJoke() {
+      // --- Safe Fetch Function for Robust Error Handling ---
+      async function safeFetch(url, options = {}) {
         try {
-          const res = await fetch("https://icanhazdadjoke.com/", { headers: { "Accept": "text/plain" } });
-          if (res.ok) return await res.text();
-          return "Sorry, no joke available.";
-        } catch (err) {
-          console.error("Joke API error:", err);
-          return "Error fetching joke.";
+          const response = await fetch(url, options);
+          if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+          }
+          return await response.text();
+        } catch (error) {
+          console.error("Fetch error:", error);
+          // Fallback to no-cors mode (results will be opaque)
+          try {
+            console.warn("Attempting fallback fetch with no-cors mode.");
+            const fallbackResponse = await fetch(url, { ...options, mode: "no-cors" });
+            return await fallbackResponse.text();
+          } catch (fallbackError) {
+            console.error("Fallback fetch error:", fallbackError);
+            return null;
+          }
         }
       }
+
+      // --- Public API Functions using safeFetch ---
+      async function fetchJoke() {
+        const data = await safeFetch("https://icanhazdadjoke.com/", { headers: { "Accept": "text/plain" } });
+        return data || "Sorry, no joke available.";
+      }
       async function fetchAdvice() {
+        const data = await safeFetch("https://api.adviceslip.com/advice");
         try {
-          const res = await fetch("https://api.adviceslip.com/advice");
-          if (res.ok) {
-            const data = await res.json();
-            return data.slip.advice;
-          }
+          return data ? JSON.parse(data).slip.advice : "Sorry, no advice available.";
+        } catch (e) {
           return "Sorry, no advice available.";
-        } catch (err) {
-          console.error("Advice API error:", err);
-          return "Error fetching advice.";
         }
       }
       async function fetchQuote() {
+        const data = await safeFetch("https://api.quotable.io/random");
         try {
-          const res = await fetch("https://api.quotable.io/random");
-          if (res.ok) {
-            const data = await res.json();
-            return data.content;
-          }
+          return data ? JSON.parse(data).content : "Sorry, no quote available.";
+        } catch (e) {
           return "Sorry, no quote available.";
-        } catch (err) {
-          console.error("Quote API error:", err);
-          return "Error fetching quote.";
         }
       }
       async function fetchCatFact() {
+        const data = await safeFetch("https://catfact.ninja/fact");
         try {
-          const res = await fetch("https://catfact.ninja/fact");
-          if (res.ok) {
-            const data = await res.json();
-            return data.fact;
-          }
+          return data ? JSON.parse(data).fact : "Sorry, no cat fact available.";
+        } catch (e) {
           return "Sorry, no cat fact available.";
-        } catch (err) {
-          console.error("Cat Fact API error:", err);
-          return "Error fetching cat fact.";
         }
       }
       async function getResponse(action) {
         if (action === 0) {
           const joke = await fetchJoke();
-          if (!joke.startsWith("Error")) return responses[0] + joke;
+          if (joke && !joke.startsWith("Error")) return responses[0] + joke;
           else return responses[1] + await fetchAdvice();
         } else if (action === 1) {
           const advice = await fetchAdvice();
-          if (!advice.startsWith("Error")) return responses[1] + advice;
+          if (advice && !advice.startsWith("Error")) return responses[1] + advice;
           else return responses[0] + await fetchJoke();
         } else if (action === 2) {
           const quote = await fetchQuote();
@@ -264,7 +217,7 @@
         }
       }
 
-      // Append message to chat log. If sender is Chatbot, include feedback buttons.
+      // --- UI Helpers ---
       function appendMessage(sender, message, features = null) {
         const msgElem = document.createElement("div");
         msgElem.style.marginBottom = "10px";
@@ -284,8 +237,6 @@
         chatLog.appendChild(msgElem);
         chatLog.scrollTop = chatLog.scrollHeight;
       }
-
-      // Utility: Argmax.
       function argmax(arr) {
         let maxIndex = 0, maxValue = arr[0];
         for (let i = 1; i < arr.length; i++) {
@@ -293,8 +244,6 @@
         }
         return maxIndex;
       }
-
-      // Reward function.
       function calculateReward(message, action) {
         const positiveKeywords = ["joke", "advice", "quote", "cat", "fascinating", "learn"];
         let reward = 0;
@@ -304,27 +253,33 @@
         if (action >= 2) reward += 0.5;
         return reward;
       }
-
-      // Record feedback from thumbs up/down.
       function recordFeedback(features, isPositive) {
         const feedbackReward = isPositive ? 5 : -5;
-        // Add a new training sample with feedback.
         commander.exp.push({ state: features, action: 0, reward: feedbackReward, nextState: features, done: false });
         logEvent("Feedback recorded: " + (isPositive ? "👍" : "👎"));
         commander.trainExtra();
       }
-
-      // Update step count display.
       function updateStepDisplay(steps) {
         stepBar.textContent = "Steps: " + steps;
       }
+      function updateLossChart(lossData) {
+        lossChart.data.labels = lossData.map((v, i) => i);
+        lossChart.data.datasets[0].data = lossData;
+        lossChart.update();
+      }
+      function updatePerformancePanel() {
+        performancePanel.innerHTML = `Steps: ${commander.stepCount} | Epsilon: ${commander.epsilon.toFixed(3)}`;
+      }
+      function logEvent(msg) {
+        console.log("[CHAT LOG]:", msg);
+      }
 
-      // CommanderAgent with the huge model and optimizations.
+      // --- CommanderAgent Class ---
       class CommanderAgent {
         constructor() {
           this.stepCount = 0;
           this.epsilon = 1.0;
-          this.exp = [];  // Replay memory.
+          this.exp = [];
           this.learningRate = parseFloat(document.getElementById("lrInput").value);
           this.mutationRate = parseFloat(document.getElementById("mutRateInput").value);
           this.epsilonDecay = parseFloat(document.getElementById("decayInput").value);
@@ -337,7 +292,7 @@
         }
         buildCommanderDQN() {
           const model = tf.sequential();
-          // Restore huge model: hidden layers of 32768, 16384, 8192, 4096, 2048, 1024 units.
+          // Original large model hidden layers.
           model.add(tf.layers.dense({ units: 32768, inputShape: [9] }));
           model.add(tf.layers.batchNormalization());
           model.add(tf.layers.leakyReLU({ alpha: 0.1 }));
@@ -477,38 +432,7 @@
         }
       });
 
-      // Update loss chart.
-      function updateLossChart(lossData) {
-        lossChart.data.labels = lossData.map((v, i) => i);
-        lossChart.data.datasets[0].data = lossData;
-        lossChart.update();
-      }
-
-      // Update performance panel.
-      function updatePerformancePanel() {
-        performancePanel.innerHTML = `Steps: ${commander.stepCount} | Epsilon: ${commander.epsilon.toFixed(3)}`;
-      }
-
-      // Handle user message.
-      async function handleMessage() {
-        const message = userInput.value.trim();
-        if (!message) return;
-        appendMessage("User", message);
-        userInput.value = "";
-        const result = await commander.step(message);
-        const action = result.action;
-        const features = result.features;
-        const response = await getResponse(action);
-        appendMessage("Chatbot", response, features);
-        updatePerformancePanel();
-      }
-
-      sendButton.addEventListener("click", handleMessage);
-      userInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") handleMessage();
-      });
-
-      // Pre-training routine: increased to 500 samples over 40 epochs.
+      // Pre-training routine: 500 samples over 40 epochs.
       async function preTrainChatbot() {
         const inputs = [];
         const labels = [];
@@ -536,7 +460,7 @@
         updatePerformancePanel();
       }, 30000);
 
-      // Additionally, every 20 seconds fetch a random quote and a cat fact as training input.
+      // Additionally, every 20 seconds fetch a random quote and a cat fact.
       setInterval(async () => {
         const quote = await fetchQuote();
         if (quote && !quote.startsWith("Error")) {
@@ -552,9 +476,50 @@
 
       updatePerformancePanel();
 
-      // Log event utility.
-      function logEvent(msg) {
-        console.log("[CHAT LOG]:", msg);
+      // Auto-backup model to localStorage every 60 seconds.
+      setInterval(async () => {
+        try {
+          await commander.model.save('localstorage://backup-model');
+          logEvent("Model auto-backup saved to localStorage.");
+        } catch (e) {
+          console.error("Auto-backup error:", e);
+        }
+      }, 60000);
+
+      // On startup, try to load backup from localStorage.
+      (async function loadBackup() {
+        try {
+          const backupModel = await tf.loadLayersModel('localstorage://backup-model');
+          commander.model = backupModel;
+          commander.targetModel = backupModel;
+          logEvent("Backup model loaded from localStorage.");
+        } catch (e) {
+          console.log("No backup model found, starting fresh.");
+        }
+      })();
+
+      // Handle user message.
+      async function handleMessage() {
+        const message = userInput.value.trim();
+        if (!message) return;
+        appendMessage("User", message);
+        userInput.value = "";
+        const result = await commander.step(message);
+        const action = result.action;
+        const features = result.features;
+        const response = await getResponse(action);
+        appendMessage("Chatbot", response, features);
+        updatePerformancePanel();
+      }
+
+      sendButton.addEventListener("click", handleMessage);
+      userInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") handleMessage();
+      });
+
+      // Update performance panel.
+      function updatePerformancePanel() {
+        performancePanel.innerHTML = `Steps: ${commander.stepCount} | Epsilon: ${commander.epsilon.toFixed(3)}`;
       }
     })();
   </script>
