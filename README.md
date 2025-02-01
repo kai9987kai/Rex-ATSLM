@@ -1,1 +1,1 @@
-ACtive training sall lanuage model
+Active training small language model
