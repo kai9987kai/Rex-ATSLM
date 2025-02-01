@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -92,7 +93,7 @@
       grid-column: span 2;
       background: #d9534f;
     }
-    /* Info panel for loss chart and step count (below controls) */
+    /* Info panel for loss chart, loss display, and a DALL·E image (placeholder) */
     #infoPanel {
       top: 300px;
       right: 1rem;
@@ -101,6 +102,16 @@
     #lossChartContainer {
       width: 100%;
       height: 200px;
+    }
+    #lossDisplay {
+      margin-top: 0.5rem;
+      text-align: center;
+    }
+    /* DALL·E generated image placeholder */
+    #dalleImage {
+      width: 100%;
+      margin-top: 1rem;
+      border: 2px solid var(--accent);
     }
     /* Performance panel at bottom right */
     #performancePanel {
@@ -145,33 +156,65 @@
     <div id="lossChartContainer">
       <canvas id="lossChart"></canvas>
     </div>
+    <div id="lossDisplay">Loss: N/A</div>
+    <!-- DALL·E generated image placeholder -->
+    <img id="dalleImage" src="https://via.placeholder.com/280x200?text=DALL-E+Generated+Image" alt="DALL-E Generated Image">
   </div>
   <div id="performancePanel"></div>
-  
+
   <script>
     (function(){
-      // Set the backend to WebGL for GPU acceleration.
+      // Set TensorFlow backend to WebGL for GPU acceleration and force lower-precision textures if needed.
       tf.setBackend('webgl');
-      // Force lower-precision textures if necessary.
       tf.env().set('WEBGL_FORCE_F16_TEXTURES', true);
 
-      // Wrap all code in an IIFE.
-
-      // Define responses only once.
+      // Predefined response templates.
       const responses = [
         "Here's a joke: ",
         "Here's some advice: ",
         "Here's a quote: ",
         "Did you know? ",
-        "I see. Could you tell me more?",
-        "That's fascinating!",
-        "I'm learning—tell me more.",
-        "Let's change the topic. What else is on your mind?",
         "Chuck Norris says: ",
         "Kanye says: "
       ];
 
-      // --- Additional API Functions ---
+      // --- API Fetch Functions ---
+      async function safeFetch(url, options = {}) {
+        try {
+          const response = await fetch(url, options);
+          if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+          return await response.text();
+        } catch (error) {
+          console.error("Fetch error:", error);
+          try {
+            console.warn("Fallback: attempting fetch with no-cors mode.");
+            const fallbackResponse = await fetch(url, { ...options, mode: "no-cors" });
+            return await fallbackResponse.text();
+          } catch (fallbackError) {
+            console.error("Fallback fetch error:", fallbackError);
+            return null;
+          }
+        }
+      }
+      async function fetchJoke() {
+        const data = await safeFetch("https://icanhazdadjoke.com/", { headers: { "Accept": "text/plain" } });
+        return data || "Sorry, no joke available.";
+      }
+      async function fetchAdvice() {
+        const data = await safeFetch("https://api.adviceslip.com/advice");
+        try { return data ? JSON.parse(data).slip.advice : "Sorry, no advice available."; }
+        catch (e) { return "Sorry, no advice available."; }
+      }
+      async function fetchQuote() {
+        const data = await safeFetch("https://api.quotable.io/random");
+        try { return data ? JSON.parse(data).content : "Sorry, no quote available."; }
+        catch (e) { return "Sorry, no quote available."; }
+      }
+      async function fetchCatFact() {
+        const data = await safeFetch("https://catfact.ninja/fact");
+        try { return data ? JSON.parse(data).fact : "Sorry, no cat fact available."; }
+        catch (e) { return "Sorry, no cat fact available."; }
+      }
       async function fetchChuckNorris() {
         try {
           const res = await safeFetch("https://api.chucknorris.io/jokes/random");
@@ -198,46 +241,6 @@
           return "Error fetching Kanye quote.";
         }
       }
-
-      // --- Safe Fetch Function with Fallback ---
-      async function safeFetch(url, options = {}) {
-        try {
-          const response = await fetch(url, options);
-          if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-          return await response.text();
-        } catch (error) {
-          console.error("Fetch error:", error);
-          try {
-            console.warn("Fallback: attempting fetch with no-cors mode.");
-            const fallbackResponse = await fetch(url, { ...options, mode: "no-cors" });
-            return await fallbackResponse.text();
-          } catch (fallbackError) {
-            console.error("Fallback fetch error:", fallbackError);
-            return null;
-          }
-        }
-      }
-
-      // --- Public API Functions ---
-      async function fetchJoke() {
-        const data = await safeFetch("https://icanhazdadjoke.com/", { headers: { "Accept": "text/plain" } });
-        return data || "Sorry, no joke available.";
-      }
-      async function fetchAdvice() {
-        const data = await safeFetch("https://api.adviceslip.com/advice");
-        try { return data ? JSON.parse(data).slip.advice : "Sorry, no advice available."; }
-        catch (e) { return "Sorry, no advice available."; }
-      }
-      async function fetchQuote() {
-        const data = await safeFetch("https://api.quotable.io/random");
-        try { return data ? JSON.parse(data).content : "Sorry, no quote available."; }
-        catch (e) { return "Sorry, no quote available."; }
-      }
-      async function fetchCatFact() {
-        const data = await safeFetch("https://catfact.ninja/fact");
-        try { return data ? JSON.parse(data).fact : "Sorry, no cat fact available."; }
-        catch (e) { return "Sorry, no cat fact available."; }
-      }
       async function getResponse(action) {
         if (action === 0) {
           const joke = await fetchJoke();
@@ -249,22 +252,34 @@
           else return responses[0] + await fetchJoke();
         } else if (action === 2) {
           const quote = await fetchQuote();
-          return "Here's a quote: " + quote;
+          return responses[2] + quote;
         } else if (action === 3) {
           const catFact = await fetchCatFact();
-          return "Did you know? " + catFact;
+          return responses[3] + catFact;
         } else if (action === 4) {
           const chuck = await fetchChuckNorris();
-          return "Chuck Norris says: " + chuck;
+          return responses[4] + chuck;
         } else if (action === 5) {
           const kanye = await fetchKanye();
-          return "Kanye says: " + kanye;
+          return responses[5] + kanye;
         } else {
           return responses[action];
         }
       }
 
       // --- UI Helper Functions ---
+      const chatLog = document.getElementById("chatLog");
+      const stepBar = document.getElementById("stepBar");
+      const userInput = document.getElementById("userInput");
+      const sendButton = document.getElementById("sendButton");
+      const performancePanel = document.getElementById("performancePanel");
+      const lossDisplay = document.getElementById("lossDisplay");
+      const lossChartCtx = document.getElementById("lossChart").getContext("2d");
+      let lossChart = new Chart(lossChartCtx, {
+        type: 'line',
+        data: { labels: [], datasets: [{ label: 'Loss', data: [], borderColor: 'var(--accent)', fill: false }] },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
       function appendMessage(sender, message, features = null) {
         const msgElem = document.createElement("div");
         msgElem.style.marginBottom = "10px";
@@ -319,14 +334,13 @@
       }
       function logEvent(msg) {
         console.log("[CHAT LOG]:", msg);
-        // Optionally, store recent logs in localStorage for later inspection.
         let logs = localStorage.getItem("chatLogs");
         logs = logs ? JSON.parse(logs) : [];
         logs.push({ time: new Date().toISOString(), msg });
         localStorage.setItem("chatLogs", JSON.stringify(logs.slice(-100)));
       }
 
-      // --- CommanderAgent Class ---
+      // --- CommanderAgent Class with Dueling & Double DQN ---
       class CommanderAgent {
         constructor() {
           this.stepCount = 0;
@@ -335,49 +349,41 @@
           this.learningRate = parseFloat(document.getElementById("lrInput").value);
           this.mutationRate = parseFloat(document.getElementById("mutRateInput").value);
           this.epsilonDecay = parseFloat(document.getElementById("decayInput").value);
-          // Model input: 9 features.
+          // Build model using a dueling architecture (research: Wang et al., 2016)
           try {
-            this.model = this.buildCommanderDQN();
-            this.targetModel = this.buildCommanderDQN();
+            this.model = this.buildDuelingDQN();
+            this.targetModel = this.buildDuelingDQN();
             this.targetModel.setWeights(this.model.getWeights());
           } catch (err) {
             console.error("Model construction error:", err);
-            // Fallback: switch to lower precision if memory error occurs.
             tf.env().set('WEBGL_FORCE_F16_TEXTURES', true);
-            this.model = this.buildCommanderDQN();
-            this.targetModel = this.buildCommanderDQN();
+            this.model = this.buildDuelingDQN();
+            this.targetModel = this.buildDuelingDQN();
             this.targetModel.setWeights(this.model.getWeights());
           }
           this.lossHistory = [];
           this.lossData = [];
         }
-        buildCommanderDQN() {
-          const model = tf.sequential();
-          // Original large model: hidden layers of 32768, 16384, 8192, 4096, 2048, 1024 units.
-          model.add(tf.layers.dense({ units: 32768, inputShape: [9] }));
-          model.add(tf.layers.batchNormalization());
-          model.add(tf.layers.leakyReLU({ alpha: 0.1 }));
-          model.add(tf.layers.dropout({ rate: 0.2 }));
-          model.add(tf.layers.dense({ units: 16384 }));
-          model.add(tf.layers.batchNormalization());
-          model.add(tf.layers.leakyReLU({ alpha: 0.1 }));
-          model.add(tf.layers.dropout({ rate: 0.2 }));
-          model.add(tf.layers.dense({ units: 8192 }));
-          model.add(tf.layers.batchNormalization());
-          model.add(tf.layers.leakyReLU({ alpha: 0.1 }));
-          model.add(tf.layers.dropout({ rate: 0.2 }));
-          model.add(tf.layers.dense({ units: 4096 }));
-          model.add(tf.layers.batchNormalization());
-          model.add(tf.layers.leakyReLU({ alpha: 0.1 }));
-          model.add(tf.layers.dropout({ rate: 0.2 }));
-          model.add(tf.layers.dense({ units: 2048 }));
-          model.add(tf.layers.batchNormalization());
-          model.add(tf.layers.leakyReLU({ alpha: 0.1 }));
-          model.add(tf.layers.dense({ units: 1024, activation: 'linear' }));
-          model.add(tf.layers.dense({ units: 6, activation: 'linear' }));
+        // Build a dueling network architecture using the functional API.
+        buildDuelingDQN() {
+          const input = tf.input({ shape: [9] });
+          // Shared hidden layers (using smaller units for efficiency)
+          let x = tf.layers.dense({ units: 128, activation: 'relu' }).apply(input);
+          x = tf.layers.dense({ units: 128, activation: 'relu' }).apply(x);
+          // Value stream
+          const valueStream = tf.layers.dense({ units: 64, activation: 'relu' }).apply(x);
+          const value = tf.layers.dense({ units: 1, activation: 'linear' }).apply(valueStream);
+          // Advantage stream (number of actions equals responses.length)
+          const advantageStream = tf.layers.dense({ units: 64, activation: 'relu' }).apply(x);
+          const advantage = tf.layers.dense({ units: responses.length, activation: 'linear' }).apply(advantageStream);
+          // Combine streams: Q(s,a) = V(s) + (A(s,a) - mean(A(s,a)))
+          const meanAdvantage = tf.layers.lambda(a => tf.sub(a, tf.mean(a, 1, true))).apply(advantage);
+          const qValues = tf.layers.add().apply([value, meanAdvantage]);
+          const model = tf.model({ inputs: input, outputs: qValues });
           model.compile({ optimizer: tf.train.adam(this.learningRate), loss: 'meanSquaredError' });
           return model;
         }
+        // Feature extraction from text message.
         extractFeatures(message) {
           const length = message.length;
           const charSum = message.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
@@ -391,6 +397,7 @@
             Math.random(), Math.random()
           ];
         }
+        // Decide action using epsilon-greedy policy.
         decideAction(features) {
           let action;
           if (Math.random() < this.epsilon) {
@@ -405,6 +412,7 @@
           }
           return action;
         }
+        // Step function: process message, choose action and store experience.
         async step(message) {
           const features = this.extractFeatures(message);
           const action = this.decideAction(features);
@@ -415,6 +423,7 @@
           updateStepDisplay(this.stepCount);
           return { action, features };
         }
+        // Learn from experiences using Double DQN update.
         async learn() {
           const batchSize = 64;
           const batch = this.exp.slice(-batchSize);
@@ -424,13 +433,17 @@
           const nextStates = batch.map(e => e.nextState);
           const sT = tf.tensor2d(states);
           const nsT = tf.tensor2d(nextStates);
+          // Predictions from main and target networks
           const currQ = this.model.predict(sT);
-          const nextQ = this.targetModel.predict(nsT);
+          const nextTargetQ = this.targetModel.predict(nsT);
+          const nextMainQ = this.model.predict(nsT);
           const currData = currQ.arraySync();
-          const nextData = nextQ.arraySync();
+          const nextTargetData = nextTargetQ.arraySync();
+          const nextMainData = nextMainQ.arraySync();
+          // Double Q-Learning target calculation.
           for (let i = 0; i < batch.length; i++) {
-            const maxNext = Math.max(...nextData[i]);
-            currData[i][actions[i]] = rewards[i] + 0.99 * maxNext;
+            const doubleAction = argmax(nextMainData[i]);
+            currData[i][actions[i]] = rewards[i] + 0.99 * nextTargetData[i][doubleAction];
           }
           const target = tf.tensor2d(currData);
           try {
@@ -438,10 +451,12 @@
             const loss = info.history.loss[0];
             this.lossHistory.push(loss);
             this.lossData.push(loss);
-            document.getElementById("lossDisplay").textContent = "Loss: " + loss.toFixed(4);
+            lossDisplay.textContent = "Loss: " + loss.toFixed(4);
             updateLossChart(this.lossData);
+            // Adaptive learning rate (research: adaptive methods in RL)
             if (loss > 0.1) this.learningRate *= 0.98; else this.learningRate *= 1.02;
             this.model.optimizer.learningRate = this.learningRate;
+            // Update target network periodically using a soft update (tau = 0.1)
             if (this.stepCount % 100 === 0) {
               const tau = 0.1;
               const weights = this.model.getWeights();
@@ -453,9 +468,10 @@
           } catch (err) {
             console.error("Learning error:", err);
           } finally {
-            tf.dispose([sT, nsT, currQ, nextQ, target]);
+            tf.dispose([sT, nsT, currQ, nextTargetQ, nextMainQ, target]);
           }
         }
+        // Extra training routine.
         trainExtra() {
           for (let i = 0; i < 100; i++) {
             this.step("dummy");
@@ -464,10 +480,10 @@
         }
       }
 
-      // Instantiate the CommanderAgent.
+      // Instantiate CommanderAgent.
       const commander = new CommanderAgent();
 
-      // Export model function.
+      // Export model functionality.
       async function exportModel() {
         try {
           await commander.model.save('downloads://chatbot-model');
@@ -478,7 +494,7 @@
         }
       }
 
-      // Import model functionality.
+      // Import model from file.
       document.getElementById("modelUpload").addEventListener("change", async (evt) => {
         const files = evt.target.files;
         if (files.length === 0) return;
@@ -493,7 +509,7 @@
         }
       });
 
-      // Reset model: Clear current model and localStorage backup, then reload the page.
+      // Reset model and clear backups.
       window.resetModel = function() {
         if (confirm("This will reset the model and clear backup data. Continue?")) {
           localStorage.removeItem("backup-model");
@@ -502,30 +518,25 @@
         }
       };
 
-      // Update loss chart.
-      function updateLossChart(lossData) {
-        lossChart.data.labels = lossData.map((v, i) => i);
-        lossChart.data.datasets[0].data = lossData;
-        lossChart.update();
-      }
-
-      // Update performance panel.
-      function updatePerformancePanel() {
-        performancePanel.innerHTML = `Steps: ${commander.stepCount} | Epsilon: ${commander.epsilon.toFixed(3)}`;
-      }
-
-      // Handle user message.
+      // Handle incoming user message.
       async function handleMessage() {
         const message = userInput.value.trim();
         if (!message) return;
         appendMessage("User", message);
         userInput.value = "";
-        const result = await commander.step(message);
-        const action = result.action;
-        const features = result.features;
-        const response = await getResponse(action);
-        appendMessage("Chatbot", response, features);
-        updatePerformancePanel();
+        try {
+          const result = await commander.step(message);
+          const action = result.action;
+          const features = result.features;
+          const response = await getResponse(action);
+          appendMessage("Chatbot", response, features);
+        } catch (error) {
+          console.error("Error processing message:", error);
+          appendMessage("Chatbot", "Sorry, I encountered an error and could not respond.");
+          logEvent("Error during message processing: " + error.message);
+        } finally {
+          updatePerformancePanel();
+        }
       }
 
       sendButton.addEventListener("click", handleMessage);
@@ -533,7 +544,7 @@
         if (e.key === "Enter") handleMessage();
       });
 
-      // Pre-training routine: 500 samples over 40 epochs.
+      // Pre-training routine: using 500 samples over 40 epochs.
       async function preTrainChatbot() {
         const inputs = [];
         const labels = [];
@@ -567,7 +578,7 @@
         updatePerformancePanel();
       }, 30000);
 
-      // Every 20 seconds, fetch random data from additional APIs.
+      // Every 20 seconds, fetch random data from various APIs for background training.
       setInterval(async () => {
         const quote = await fetchQuote();
         if (quote && !quote.startsWith("Error")) {
@@ -593,7 +604,7 @@
 
       updatePerformancePanel();
 
-      // Auto-backup model and metrics to localStorage every 60 seconds.
+      // Auto-backup model and performance metrics to localStorage every 60 seconds.
       setInterval(async () => {
         try {
           await commander.model.save('localstorage://backup-model');
@@ -609,7 +620,7 @@
         }
       }, 60000);
 
-      // On startup, try to load backup from localStorage.
+      // On startup, try loading backup model and metrics from localStorage.
       (async function loadBackup() {
         try {
           const backupModel = await tf.loadLayersModel('localstorage://backup-model');
@@ -632,3 +643,4 @@
   </script>
 </body>
 </html>
+
