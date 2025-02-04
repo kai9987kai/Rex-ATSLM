@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -25,7 +24,7 @@
       display: flex;
       flex-direction: column;
     }
-    /* Chat container (left side) */
+    /* Chat container */
     #chatContainer {
       flex: 1;
       overflow-y: auto;
@@ -33,19 +32,17 @@
       background: var(--secondary-bg);
       position: relative;
     }
-    /* Chat log area with room for the step bar */
     #chatLog {
       max-height: calc(100% - 2rem);
       overflow-y: auto;
     }
-    /* Step bar at the bottom of chat container */
     #stepBar {
       padding: 0.5rem;
       text-align: center;
       background: var(--primary-bg);
       border-top: 1px solid #3d3d3d;
     }
-    /* Prompt bar – only text input and send button */
+    /* Input area */
     #inputContainer {
       display: flex;
       gap: 0.3rem;
@@ -88,12 +85,10 @@
       grid-template-columns: 1fr 1fr;
       gap: 0.5rem;
     }
-    /* New Reset Model button placed in controls */
     #controls button.resetBtn {
       grid-column: span 2;
       background: #d9534f;
     }
-    /* Info panel for loss chart, loss display, and a DALL·E image (placeholder) */
     #infoPanel {
       top: 300px;
       right: 1rem;
@@ -107,19 +102,16 @@
       margin-top: 0.5rem;
       text-align: center;
     }
-    /* DALL·E generated image placeholder */
     #dalleImage {
       width: 100%;
       margin-top: 1rem;
       border: 2px solid var(--accent);
     }
-    /* Performance panel at bottom right */
     #performancePanel {
       bottom: 1rem;
       right: 1rem;
       width: 280px;
     }
-    /* Style for feedback buttons */
     .feedbackBtn {
       background: transparent;
       border: none;
@@ -163,12 +155,29 @@
   <div id="performancePanel"></div>
 
   <script>
+    // Custom LambdaLayer to wrap arbitrary functions in a tf.layers.Layer.
+    class LambdaLayer extends tf.layers.Layer {
+      constructor(func, config) {
+        super(config || {});
+        this.func = func;
+      }
+      call(inputs, kwargs) {
+        return this.func(inputs);
+      }
+      computeOutputShape(inputShape) {
+        return inputShape;
+      }
+      getClassName() {
+        return 'LambdaLayer';
+      }
+    }
+
     (function(){
-      // Set TensorFlow backend to WebGL for GPU acceleration and force lower-precision textures if needed.
+      // Set TensorFlow backend to WebGL and force lower precision if needed.
       tf.setBackend('webgl');
       tf.env().set('WEBGL_FORCE_F16_TEXTURES', true);
 
-      // Predefined response templates.
+      // Predefined responses.
       const responses = [
         "Here's a joke: ",
         "Here's some advice: ",
@@ -187,7 +196,6 @@
         } catch (error) {
           console.error("Fetch error:", error);
           try {
-            console.warn("Fallback: attempting fetch with no-cors mode.");
             const fallbackResponse = await fetch(url, { ...options, mode: "no-cors" });
             return await fallbackResponse.text();
           } catch (fallbackError) {
@@ -340,7 +348,7 @@
         localStorage.setItem("chatLogs", JSON.stringify(logs.slice(-100)));
       }
 
-      // --- CommanderAgent Class with Dueling & Double DQN ---
+      // --- CommanderAgent with Stacked Adaptive Self-Attention ---
       class CommanderAgent {
         constructor() {
           this.stepCount = 0;
@@ -349,7 +357,6 @@
           this.learningRate = parseFloat(document.getElementById("lrInput").value);
           this.mutationRate = parseFloat(document.getElementById("mutRateInput").value);
           this.epsilonDecay = parseFloat(document.getElementById("decayInput").value);
-          // Build model using a dueling architecture (research: Wang et al., 2016)
           try {
             this.model = this.buildDuelingDQN();
             this.targetModel = this.buildDuelingDQN();
@@ -364,26 +371,56 @@
           this.lossHistory = [];
           this.lossData = [];
         }
-        // Build a dueling network architecture using the functional API.
+        // Multi-head self-attention block with dropout and layer normalization.
+        multiHeadSelfAttention(inputTensor, numHeads, dropoutRate = 0.1) {
+          const tokenDim = inputTensor.shape[2];
+          const depth = Math.floor(tokenDim / numHeads);
+          const headOutputs = [];
+          for (let i = 0; i < numHeads; i++) {
+            // Use custom LambdaLayer to slice tokens.
+            const sliceLayer = new LambdaLayer(x => tf.slice(x, [0, 0, i * depth], [-1, -1, depth]));
+            const headInput = sliceLayer.apply(inputTensor);
+            const Q = tf.layers.dense({ units: depth, useBias: false }).apply(headInput);
+            const K = tf.layers.dense({ units: depth, useBias: false }).apply(headInput);
+            const V = tf.layers.dense({ units: depth, useBias: false }).apply(headInput);
+            const scores = tf.layers.dot({ axes: -1 }).apply([Q, K]);
+            // Instead of direct tf.div, wrap the scaling in a LambdaLayer.
+            const divisor = tf.scalar(Math.sqrt(depth));
+            const scaleLayer = new LambdaLayer(x => tf.div(x, divisor));
+            const scaledScores = scaleLayer.apply(scores);
+            const softmaxScores = tf.layers.activation({ activation: 'softmax' }).apply(scaledScores);
+            const headOutput = tf.layers.dot({ axes: [2, 1] }).apply([softmaxScores, V]);
+            headOutputs.push(headOutput);
+          }
+          const concat = tf.layers.concatenate({ axis: -1 }).apply(headOutputs);
+          const output = tf.layers.dense({ units: tokenDim, useBias: false }).apply(concat);
+          const dropped = tf.layers.dropout({ rate: dropoutRate }).apply(output);
+          const added = tf.layers.add().apply([inputTensor, dropped]);
+          const norm = tf.layers.layerNormalization().apply(added);
+          return norm;
+        }
+        // Build the dueling network with two stacked self-attention blocks.
         buildDuelingDQN() {
           const input = tf.input({ shape: [9] });
-          // Shared hidden layers (using smaller units for efficiency)
-          let x = tf.layers.dense({ units: 128, activation: 'relu' }).apply(input);
-          x = tf.layers.dense({ units: 128, activation: 'relu' }).apply(x);
-          // Value stream
-          const valueStream = tf.layers.dense({ units: 64, activation: 'relu' }).apply(x);
+          let x = tf.layers.dense({ units: 96, activation: 'relu' }).apply(input);
+          x = tf.layers.dense({ units: 96, activation: 'relu' }).apply(x);
+          let reshaped = tf.layers.reshape({ targetShape: [4, 24] }).apply(x);
+          let attnOut1 = this.multiHeadSelfAttention(reshaped, 4, 0.1);
+          let attnOut2 = this.multiHeadSelfAttention(attnOut1, 4, 0.1);
+          let flattened = tf.layers.flatten().apply(attnOut2);
+          const valueStream = tf.layers.dense({ units: 48, activation: 'relu' }).apply(flattened);
           const value = tf.layers.dense({ units: 1, activation: 'linear' }).apply(valueStream);
-          // Advantage stream (number of actions equals responses.length)
-          const advantageStream = tf.layers.dense({ units: 64, activation: 'relu' }).apply(x);
+          const advantageStream = tf.layers.dense({ units: 48, activation: 'relu' }).apply(flattened);
           const advantage = tf.layers.dense({ units: responses.length, activation: 'linear' }).apply(advantageStream);
-          // Combine streams: Q(s,a) = V(s) + (A(s,a) - mean(A(s,a)))
-          const meanAdvantage = tf.layers.lambda(a => tf.sub(a, tf.mean(a, 1, true))).apply(advantage);
+          // Use LambdaLayer to subtract the mean of the advantage.
+          const meanAdvantageLayer = new LambdaLayer(a => tf.sub(a, tf.mean(a, 1, true)));
+          const meanAdvantage = meanAdvantageLayer.apply(advantage);
           const qValues = tf.layers.add().apply([value, meanAdvantage]);
           const model = tf.model({ inputs: input, outputs: qValues });
           model.compile({ optimizer: tf.train.adam(this.learningRate), loss: 'meanSquaredError' });
           return model;
         }
-        // Feature extraction from text message.
+        // Feature extraction from text.
         extractFeatures(message) {
           const length = message.length;
           const charSum = message.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
@@ -397,7 +434,7 @@
             Math.random(), Math.random()
           ];
         }
-        // Decide action using epsilon-greedy policy.
+        // Epsilon-greedy action selection.
         decideAction(features) {
           let action;
           if (Math.random() < this.epsilon) {
@@ -412,7 +449,7 @@
           }
           return action;
         }
-        // Step function: process message, choose action and store experience.
+        // Process message and store experience.
         async step(message) {
           const features = this.extractFeatures(message);
           const action = this.decideAction(features);
@@ -423,7 +460,7 @@
           updateStepDisplay(this.stepCount);
           return { action, features };
         }
-        // Learn from experiences using Double DQN update.
+        // Learn using Double DQN update.
         async learn() {
           const batchSize = 64;
           const batch = this.exp.slice(-batchSize);
@@ -433,14 +470,12 @@
           const nextStates = batch.map(e => e.nextState);
           const sT = tf.tensor2d(states);
           const nsT = tf.tensor2d(nextStates);
-          // Predictions from main and target networks
           const currQ = this.model.predict(sT);
           const nextTargetQ = this.targetModel.predict(nsT);
           const nextMainQ = this.model.predict(nsT);
           const currData = currQ.arraySync();
           const nextTargetData = nextTargetQ.arraySync();
           const nextMainData = nextMainQ.arraySync();
-          // Double Q-Learning target calculation.
           for (let i = 0; i < batch.length; i++) {
             const doubleAction = argmax(nextMainData[i]);
             currData[i][actions[i]] = rewards[i] + 0.99 * nextTargetData[i][doubleAction];
@@ -453,10 +488,8 @@
             this.lossData.push(loss);
             lossDisplay.textContent = "Loss: " + loss.toFixed(4);
             updateLossChart(this.lossData);
-            // Adaptive learning rate (research: adaptive methods in RL)
             if (loss > 0.1) this.learningRate *= 0.98; else this.learningRate *= 1.02;
             this.model.optimizer.learningRate = this.learningRate;
-            // Update target network periodically using a soft update (tau = 0.1)
             if (this.stepCount % 100 === 0) {
               const tau = 0.1;
               const weights = this.model.getWeights();
@@ -544,7 +577,7 @@
         if (e.key === "Enter") handleMessage();
       });
 
-      // Pre-training routine: using 500 samples over 40 epochs.
+      // Pre-training routine.
       async function preTrainChatbot() {
         const inputs = [];
         const labels = [];
@@ -578,7 +611,7 @@
         updatePerformancePanel();
       }, 30000);
 
-      // Every 20 seconds, fetch random data from various APIs for background training.
+      // Every 20 seconds, fetch random API data for background training.
       setInterval(async () => {
         const quote = await fetchQuote();
         if (quote && !quote.startsWith("Error")) {
@@ -604,7 +637,7 @@
 
       updatePerformancePanel();
 
-      // Auto-backup model and performance metrics to localStorage every 60 seconds.
+      // Auto-backup model and metrics every 60 seconds.
       setInterval(async () => {
         try {
           await commander.model.save('localstorage://backup-model');
@@ -620,7 +653,7 @@
         }
       }, 60000);
 
-      // On startup, try loading backup model and metrics from localStorage.
+      // On startup, load backup if available.
       (async function loadBackup() {
         try {
           const backupModel = await tf.loadLayersModel('localstorage://backup-model');
@@ -643,4 +676,3 @@
   </script>
 </body>
 </html>
-
