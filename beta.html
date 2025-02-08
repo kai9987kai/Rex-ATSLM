@@ -82,13 +82,13 @@
     #controls {
       top: 1rem;
       right: 1rem;
-      width: 420px;
+      width: 460px;
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 0.5rem;
     }
     #controls button.resetBtn {
-      grid-column: span 3;
+      grid-column: span 4;
       background: #d9534f;
     }
     /* Innovation buttons styling */
@@ -135,25 +135,27 @@
   </div>
   <div id="inputContainer">
     <input type="text" id="userInput" placeholder="Type your message here..." />
-    <button id="sendButton">Send</button>
+    <button id="sendButton" title="Send your message">Send</button>
   </div>
   <div id="controls">
-    <div style="grid-column: span 3;">
-      <label>LR: <input type="number" id="lrInput" value="0.0005" step="0.0001"></label>
-      <label>MutRate: <input type="number" id="mutRateInput" value="0.01" step="0.001"></label>
-      <label>Decay: <input type="number" id="decayInput" value="0.999" step="0.001"></label>
-      <label>Speed: <input type="range" id="speedInput" min="0.5" max="3" step="0.1" value="1"></label>
+    <div style="grid-column: span 4;">
+      <label>LR: <input type="number" id="lrInput" value="0.0005" step="0.0001" title="Learning Rate"></label>
+      <label>MutRate: <input type="number" id="mutRateInput" value="0.01" step="0.001" title="Mutation Rate"></label>
+      <label>Decay: <input type="number" id="decayInput" value="0.999" step="0.001" title="Epsilon Decay"></label>
+      <label>Speed: <input type="range" id="speedInput" min="0.5" max="3" step="0.1" value="1" title="Training Speed"></label>
     </div>
-    <button onclick="commander.trainExtra()">Train Extra</button>
-    <button onclick="exportModel()">Export Model</button>
-    <button onclick="document.getElementById('modelUpload').click()">Import Model</button>
-    <button onclick="deepSeek()">Deep Seek</button>
-    <button class="extraBtn" onclick="showMemory()">Show Memory</button>
-    <button class="extraBtn" onclick="saveChat()">Save Chat</button>
-    <button class="extraBtn" onclick="clearChat()">Clear Chat</button>
-    <button class="extraBtn" onclick="toggleBackgroundTraining()">Toggle BG Training</button>
-    <button class="extraBtn" onclick="showDebugInfo()">Show Debug Info</button>
-    <button class="resetBtn" onclick="resetModel()">Reset Model</button>
+    <button class="extraBtn" onclick="commander.trainExtra()" title="Extra training steps">Train Extra</button>
+    <button onclick="exportModel()" title="Export the current model">Export Model</button>
+    <button onclick="document.getElementById('modelUpload').click()" title="Import a saved model">Import Model</button>
+    <button onclick="deepSeek()" title="Deep search your conversation memory">Deep Seek</button>
+    <button class="extraBtn" onclick="showMemory()" title="Show recent memory">Show Memory</button>
+    <button class="extraBtn" onclick="saveChat()" title="Save the current chat history">Save Chat</button>
+    <button class="extraBtn" onclick="clearChat()" title="Clear the chat log">Clear Chat</button>
+    <button class="extraBtn" onclick="toggleBackgroundTraining()" title="Toggle background training">Toggle BG Training</button>
+    <button class="extraBtn" onclick="showDebugInfo()" title="Display debug information">Show Debug Info</button>
+    <button onclick="downloadDebugLog()" title="Download debug log">Download Debug Log</button>
+    <button onclick="resetDebugLog()" title="Clear debug log">Reset Debug Log</button>
+    <button class="resetBtn" onclick="resetModel()" title="Reset the model">Reset Model</button>
     <input type="file" id="modelUpload" style="display:none" accept=".json,.bin">
   </div>
   <div id="infoPanel">
@@ -167,7 +169,8 @@
   <div id="performancePanel"></div>
 
   <script>
-    // Global conversation history, error log and research-driven memory module.
+    "use strict";
+    // Global conversation history, error log, and research-driven memory module.
     let conversationHistory = [];
     let globalErrorLog = [];
     let useModel = null;
@@ -187,7 +190,8 @@
         memoryCount: memoryModule.memories.length,
         totalFeedback,
         positiveFeedback,
-        negativeFeedback
+        negativeFeedback,
+        backgroundTraining: backgroundTrainingActive
       };
     }
 
@@ -278,14 +282,18 @@
       }
     })();
 
-    // Custom LambdaLayer – now optionally accepts an outputShape.
+    // Custom LambdaLayer – optionally accepts an outputShape.
     class LambdaLayer extends tf.layers.Layer {
       constructor(func, outputShape, config) {
         super(config || {});
         this.func = func;
         this._outputShape = outputShape;
       }
-      call(inputs, kwargs) { return this.func(inputs); }
+      // Ensure proper handling of input tensors
+      call(inputs, kwargs) {
+        const x = Array.isArray(inputs) ? inputs[0] : inputs;
+        return this.func(x);
+      }
       computeOutputShape(inputShape) {
         if (this._outputShape) {
           if (typeof this._outputShape === 'function') { return this._outputShape(inputShape); }
@@ -412,7 +420,15 @@
       const lossChartCtx = document.getElementById("lossChart").getContext("2d");
       let lossChart = new Chart(lossChartCtx, {
         type: 'line',
-        data: { labels: [], datasets: [{ label: 'Loss', data: [], borderColor: 'var(--accent)', fill: false }] },
+        data: { 
+          labels: [], 
+          datasets: [{ 
+            label: 'Loss', 
+            data: [], 
+            borderColor: '#ffffff',  // Loss graph line color set to white
+            fill: false 
+          }] 
+        },
         options: { responsive: true, maintainAspectRatio: false }
       });
       function appendMessage(sender, message, features = null) {
@@ -420,11 +436,12 @@
           const msgElem = document.createElement("div");
           msgElem.style.marginBottom = "10px";
           msgElem.innerHTML = `<strong>${sender}:</strong> ${message}`;
-          // For Chatbot responses, add thumbs-up/down if features are provided.
+          // For Chatbot responses, add feedback buttons if features are provided.
           if (sender === "Chatbot" && features) {
             const upBtn = document.createElement("button");
             upBtn.textContent = "👍";
             upBtn.classList.add("feedbackBtn");
+            upBtn.title = "Good response";
             upBtn.addEventListener("click", (e) => {
               disableFeedbackButtons(e.target.parentElement);
               recordFeedback(e, features, true);
@@ -432,6 +449,7 @@
             const downBtn = document.createElement("button");
             downBtn.textContent = "👎";
             downBtn.classList.add("feedbackBtn");
+            downBtn.title = "Bad response";
             downBtn.addEventListener("click", (e) => {
               disableFeedbackButtons(e.target.parentElement);
               recordFeedback(e, features, false);
@@ -460,7 +478,7 @@
         return maxIndex;
       }
       function calculateReward(message, action) {
-        const positiveKeywords = ["joke", "advice", "quote", "cat", "fascinating", "learn"];
+        const positiveKeywords = ["joke", "advice", "quote", "cat", "fascinating", "learn", "awesome", "good"];
         let reward = 0;
         for (let word of positiveKeywords) {
           if (message.toLowerCase().includes(word)) reward += 1;
@@ -471,16 +489,22 @@
       function recordFeedback(e, features, isPositive) {
         try {
           const feedbackReward = isPositive ? 5 : -5;
+          // Record feedback as an experience.
           commander.exp.push({ state: features, action: 0, reward: feedbackReward, nextState: features, done: false });
           commander.priorityBuffer.add({ state: features, action: 0, reward: feedbackReward, nextState: features, done: false });
           totalFeedback++;
           if (isPositive) { positiveFeedback++; } else { negativeFeedback++; }
           logEvent("Feedback recorded: " + (isPositive ? "👍" : "👎"));
+          // Trigger extra training on feedback.
           commander.trainExtra();
           updatePerformancePanel();
         } catch (err) { console.error("Feedback recording error:", err); }
       }
-      function updateStepDisplay(steps) { stepBar.textContent = "Steps: " + steps; }
+      function updateStepDisplay(steps) { 
+        stepBar.textContent = "Steps: " + steps; 
+        // Change background color if steps exceed 1000
+        stepBar.style.backgroundColor = (steps > 1000) ? "#4caf50" : "var(--primary-bg)";
+      }
       function updateLossChart(lossData) {
         lossChart.data.labels = lossData.map((v, i) => i);
         lossChart.data.datasets[0].data = lossData;
@@ -491,7 +515,8 @@
           Steps: ${commander.stepCount} | Epsilon: ${commander.epsilon.toFixed(3)}<br>
           Learning Rate: ${commander.learningRate.toExponential(2)}<br>
           Feedback: ${positiveFeedback} 👍, ${negativeFeedback} 👎 (Total: ${totalFeedback})<br>
-          Errors Logged: ${globalErrorLog.length}
+          Errors Logged: ${globalErrorLog.length}<br>
+          BG Training: ${backgroundTrainingActive ? 'Active' : 'Paused'}
         `;
       }
       function logEvent(msg) {
@@ -502,6 +527,20 @@
           logs.push({ time: new Date().toISOString(), msg });
           localStorage.setItem("chatLogs", JSON.stringify(logs.slice(-100)));
         } catch (err) { console.error("logEvent error:", err); }
+      }
+      function downloadDebugLog() {
+        try {
+          const blob = new Blob([globalErrorLog.join("\n")], { type: "text/plain" });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = "debug_log.txt";
+          link.click();
+        } catch (err) { console.error("Download Debug Log error:", err); }
+      }
+      function resetDebugLog() {
+        globalErrorLog = [];
+        logEvent("Debug log cleared.");
+        updatePerformancePanel();
       }
 
       // --- CommanderAgent with advanced self-attention and error-handling ---
@@ -533,14 +572,14 @@
           try {
             const tokenDim = inputTensor.shape[2];
             const depth = Math.floor(tokenDim / numHeads);
-            const headOutputs = [];
+            let headOutputs = [];
             for (let i = 0; i < numHeads; i++) {
-              const inputShape = inputTensor.shape; // [batch, tokens, tokenDim]
-              const tokens = inputShape[1] || 8;
-              const sliceOutputShape = [inputShape[0] || null, tokens, depth];
+              // LambdaLayer to slice the tensor correctly
               const sliceLayer = new LambdaLayer(
                 x => tf.slice(x, [0, 0, i * depth], [-1, -1, depth]),
-                sliceOutputShape
+                function(inputShape) {
+                  return [inputShape[0], inputShape[1], depth];
+                }
               );
               const headInput = sliceLayer.apply(inputTensor);
               const Q = tf.layers.dense({ units: depth, useBias: false }).apply(headInput);
@@ -904,6 +943,7 @@
           appendMessage("User", message);
           conversationHistory.push("User: " + message);
           userInput.value = "";
+          // Use the last 3 conversation turns as context.
           const contextMessage = conversationHistory.slice(-3).join(" ");
           try {
             const result = await commander.step(contextMessage);
@@ -940,6 +980,8 @@
             labelVec[action] = 1;
             inputs.push(features);
             labels.push(labelVec);
+            // Yield to the event loop every 50 iterations to keep the UI responsive.
+            if (i % 50 === 0) await new Promise(resolve => setTimeout(resolve, 1));
           }
           const xs = tf.tensor2d(inputs);
           const ys = tf.tensor2d(labels);
