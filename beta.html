@@ -2,12 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Actively Improving AI Chatbot – Advanced & Optimized</title>
+  <title>Advanced AI Chatbot – Optimized, Adaptive & Research-Driven</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <!-- Chart.js for live loss chart -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- TensorFlow.js -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <!-- Universal Sentence Encoder for natural language embeddings -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/universal-sentence-encoder"></script>
   <style>
     :root {
       --primary-bg: #1a1a1a;
@@ -80,7 +82,7 @@
     #controls {
       top: 1rem;
       right: 1rem;
-      width: 280px;
+      width: 320px;
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 0.5rem;
@@ -90,9 +92,9 @@
       background: #d9534f;
     }
     #infoPanel {
-      top: 300px;
+      top: 350px;
       right: 1rem;
-      width: 280px;
+      width: 320px;
     }
     #lossChartContainer {
       width: 100%;
@@ -110,7 +112,7 @@
     #performancePanel {
       bottom: 1rem;
       right: 1rem;
-      width: 280px;
+      width: 320px;
     }
     .feedbackBtn {
       background: transparent;
@@ -132,7 +134,7 @@
     <button id="sendButton">Send</button>
   </div>
   <div id="controls">
-    <div class="grid-col-span-2">
+    <div style="grid-column: span 2;">
       <label>LR: <input type="number" id="lrInput" value="0.0005" step="0.0001"></label>
       <label>MutRate: <input type="number" id="mutRateInput" value="0.01" step="0.001"></label>
       <label>Decay: <input type="number" id="decayInput" value="0.999" step="0.001"></label>
@@ -141,6 +143,7 @@
     <button onclick="commander.trainExtra()">Train Extra</button>
     <button onclick="exportModel()">Export Model</button>
     <button onclick="document.getElementById('modelUpload').click()">Import Model</button>
+    <button onclick="deepSeek()">Deep Seek</button>
     <button class="resetBtn" onclick="resetModel()">Reset Model</button>
     <input type="file" id="modelUpload" style="display:none" accept=".json,.bin">
   </div>
@@ -149,22 +152,108 @@
       <canvas id="lossChart"></canvas>
     </div>
     <div id="lossDisplay">Loss: N/A</div>
-    <!-- DALL·E generated image placeholder -->
-    <img id="dalleImage" src="https://via.placeholder.com/280x200?text=DALL-E+Generated+Image" alt="DALL-E Generated Image">
+    <!-- DALL·E image updated with AI art from Unsplash -->
+    <img id="dalleImage" src="https://source.unsplash.com/320x200/?ai,art" alt="DALL-E Generated Image">
   </div>
   <div id="performancePanel"></div>
 
   <script>
-    // Custom LambdaLayer to wrap arbitrary functions in a tf.layers.Layer.
+    // Global conversation history and research-driven memory module.
+    let conversationHistory = [];
+    let useModel = null;
+    // AdvancedMemoryModule stores conversation embeddings for retrieval.
+    class AdvancedMemoryModule {
+      constructor() {
+        this.memories = [];
+      }
+      addMemory(embedding, text) {
+        this.memories.push({embedding: embedding, text: text});
+      }
+      async searchMemory(query) {
+        if (!useModel) return "";
+        const queryEmb = await useModel.embed(query);
+        const queryVec = (await queryEmb.array())[0];
+        queryEmb.dispose();
+        let bestSim = -Infinity, bestText = "";
+        for (let mem of this.memories) {
+          let sim = cosineSimilarity(queryVec, mem.embedding);
+          if (sim > bestSim) { bestSim = sim; bestText = mem.text; }
+        }
+        return bestText;
+      }
+    }
+    const memoryModule = new AdvancedMemoryModule();
+
+    // PriorityReplayBuffer for prioritized experience replay.
+    class PriorityReplayBuffer {
+      constructor(maxSize) {
+        this.buffer = [];
+        this.maxSize = maxSize;
+      }
+      add(exp) {
+        if (this.buffer.length >= this.maxSize) {
+          this.buffer.shift();
+        }
+        this.buffer.push(exp);
+      }
+      sample(batchSize) {
+        let priorities = this.buffer.map(e => Math.abs(e.reward) + 0.01);
+        let total = priorities.reduce((a, b) => a + b, 0);
+        let probs = priorities.map(p => p / total);
+        let batch = [];
+        for (let i = 0; i < batchSize; i++) {
+          let rand = Math.random(), cumulative = 0;
+          for (let j = 0; j < probs.length; j++) {
+            cumulative += probs[j];
+            if (rand < cumulative) { batch.push(this.buffer[j]); break; }
+          }
+        }
+        return batch;
+      }
+      size() {
+        return this.buffer.length;
+      }
+    }
+
+    // Utility: cosine similarity between two vectors.
+    function cosineSimilarity(vecA, vecB) {
+      let dot = 0, normA = 0, normB = 0;
+      for (let i = 0; i < vecA.length; i++) {
+        dot += vecA[i] * vecB[i];
+        normA += vecA[i] * vecA[i];
+        normB += vecB[i] * vecB[i];
+      }
+      return dot / (Math.sqrt(normA) * Math.sqrt(normB) + 1e-8);
+    }
+
+    // Load Universal Sentence Encoder for advanced natural language embeddings.
+    (async function loadUSE() {
+      try {
+        useModel = await use.load();
+        console.log("Universal Sentence Encoder loaded.");
+      } catch (err) {
+        console.error("Error loading USE:", err);
+      }
+    })();
+
+    // Custom LambdaLayer for wrapping arbitrary functions.
+    // (Now accepts an outputShape parameter so that tf.slice calls get proper shape info.)
     class LambdaLayer extends tf.layers.Layer {
-      constructor(func, config) {
+      constructor(func, outputShape, config) {
         super(config || {});
         this.func = func;
+        this._outputShape = outputShape;
       }
       call(inputs, kwargs) {
         return this.func(inputs);
       }
       computeOutputShape(inputShape) {
+        if (this._outputShape) {
+          if (typeof this._outputShape === 'function') {
+            return this._outputShape(inputShape);
+          }
+          return this._outputShape;
+        }
         return inputShape;
       }
       getClassName() {
@@ -173,11 +262,11 @@
     }
 
     (function(){
-      // Set TensorFlow backend to WebGL and force lower precision if needed.
+      // Set TensorFlow backend to WebGL and force lower precision textures.
       tf.setBackend('webgl');
       tf.env().set('WEBGL_FORCE_F16_TEXTURES', true);
 
-      // Predefined responses.
+      // Predefined responses from multiple APIs.
       const responses = [
         "Here's a joke: ",
         "Here's some advice: ",
@@ -326,6 +415,7 @@
       function recordFeedback(features, isPositive) {
         const feedbackReward = isPositive ? 5 : -5;
         commander.exp.push({ state: features, action: 0, reward: feedbackReward, nextState: features, done: false });
+        commander.priorityBuffer.add({ state: features, action: 0, reward: feedbackReward, nextState: features, done: false });
         logEvent("Feedback recorded: " + (isPositive ? "👍" : "👎"));
         commander.trainExtra();
       }
@@ -348,15 +438,19 @@
         localStorage.setItem("chatLogs", JSON.stringify(logs.slice(-100)));
       }
 
-      // --- CommanderAgent with Stacked Adaptive Self-Attention ---
+      // --- CommanderAgent with enhancements ---
       class CommanderAgent {
         constructor() {
           this.stepCount = 0;
           this.epsilon = 1.0;
-          this.exp = [];
+          this.exp = []; // basic experience storage
+          this.priorityBuffer = new PriorityReplayBuffer(512);
           this.learningRate = parseFloat(document.getElementById("lrInput").value);
           this.mutationRate = parseFloat(document.getElementById("mutRateInput").value);
           this.epsilonDecay = parseFloat(document.getElementById("decayInput").value);
+          this.lossHistory = [];
+          this.lossData = [];
+          this.lossVarianceWindow = [];
           try {
             this.model = this.buildDuelingDQN();
             this.targetModel = this.buildDuelingDQN();
@@ -368,25 +462,28 @@
             this.targetModel = this.buildDuelingDQN();
             this.targetModel.setWeights(this.model.getWeights());
           }
-          this.lossHistory = [];
-          this.lossData = [];
         }
-        // Multi-head self-attention block with dropout and layer normalization.
+        // Multi-head self-attention block.
         multiHeadSelfAttention(inputTensor, numHeads, dropoutRate = 0.1) {
           const tokenDim = inputTensor.shape[2];
           const depth = Math.floor(tokenDim / numHeads);
           const headOutputs = [];
           for (let i = 0; i < numHeads; i++) {
-            // Use custom LambdaLayer to slice tokens.
-            const sliceLayer = new LambdaLayer(x => tf.slice(x, [0, 0, i * depth], [-1, -1, depth]));
+            // Determine output shape for slicing:
+            const inputShape = inputTensor.shape; // expected [batch, tokens, tokenDim]
+            const tokens = inputShape[1] || 8;
+            const sliceOutputShape = [inputShape[0] || null, tokens, depth];
+            const sliceLayer = new LambdaLayer(
+              x => tf.slice(x, [0, 0, i * depth], [-1, -1, depth]),
+              sliceOutputShape
+            );
             const headInput = sliceLayer.apply(inputTensor);
             const Q = tf.layers.dense({ units: depth, useBias: false }).apply(headInput);
             const K = tf.layers.dense({ units: depth, useBias: false }).apply(headInput);
             const V = tf.layers.dense({ units: depth, useBias: false }).apply(headInput);
             const scores = tf.layers.dot({ axes: -1 }).apply([Q, K]);
-            // Instead of direct tf.div, wrap the scaling in a LambdaLayer.
             const divisor = tf.scalar(Math.sqrt(depth));
-            const scaleLayer = new LambdaLayer(x => tf.div(x, divisor));
+            const scaleLayer = new LambdaLayer(x => tf.div(x, divisor), null);
             const scaledScores = scaleLayer.apply(scores);
             const softmaxScores = tf.layers.activation({ activation: 'softmax' }).apply(scaledScores);
             const headOutput = tf.layers.dot({ axes: [2, 1] }).apply([softmaxScores, V]);
@@ -399,42 +496,52 @@
           const norm = tf.layers.layerNormalization().apply(added);
           return norm;
         }
-        // Build the dueling network with two stacked self-attention blocks.
+        // Build dueling DQN with stacked self-attention layers.
         buildDuelingDQN() {
-          const input = tf.input({ shape: [9] });
-          let x = tf.layers.dense({ units: 96, activation: 'relu' }).apply(input);
-          x = tf.layers.dense({ units: 96, activation: 'relu' }).apply(x);
-          let reshaped = tf.layers.reshape({ targetShape: [4, 24] }).apply(x);
+          // Input dimension is 512 from the USE embedding.
+          const input = tf.input({ shape: [512] });
+          let x = tf.layers.dense({ units: 512, activation: 'relu' }).apply(input);
+          // Reshape into a sequence for attention: 8 tokens × 64 dims = 512.
+          let reshaped = tf.layers.reshape({ targetShape: [8, 64] }).apply(x);
           let attnOut1 = this.multiHeadSelfAttention(reshaped, 4, 0.1);
           let attnOut2 = this.multiHeadSelfAttention(attnOut1, 4, 0.1);
           let flattened = tf.layers.flatten().apply(attnOut2);
-          const valueStream = tf.layers.dense({ units: 48, activation: 'relu' }).apply(flattened);
+          const valueStream = tf.layers.dense({ units: 64, activation: 'relu' }).apply(flattened);
           const value = tf.layers.dense({ units: 1, activation: 'linear' }).apply(valueStream);
-          const advantageStream = tf.layers.dense({ units: 48, activation: 'relu' }).apply(flattened);
+          const advantageStream = tf.layers.dense({ units: 64, activation: 'relu' }).apply(flattened);
           const advantage = tf.layers.dense({ units: responses.length, activation: 'linear' }).apply(advantageStream);
-          // Use LambdaLayer to subtract the mean of the advantage.
-          const meanAdvantageLayer = new LambdaLayer(a => tf.sub(a, tf.mean(a, 1, true)));
+          const meanAdvantageLayer = new LambdaLayer(a => tf.sub(a, tf.mean(a, 1, true)), null);
           const meanAdvantage = meanAdvantageLayer.apply(advantage);
           const qValues = tf.layers.add().apply([value, meanAdvantage]);
           const model = tf.model({ inputs: input, outputs: qValues });
           model.compile({ optimizer: tf.train.adam(this.learningRate), loss: 'meanSquaredError' });
           return model;
         }
-        // Feature extraction from text.
-        extractFeatures(message) {
-          const length = message.length;
-          const charSum = message.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
-          const avgChar = length > 0 ? charSum / length : 0;
-          return [
-            length / 100,
-            avgChar / 128,
-            (message.split(" ").length) / 20,
-            Math.random(), Math.random(),
-            Math.random(), Math.random(),
-            Math.random(), Math.random()
-          ];
+        // Enhanced feature extraction using Universal Sentence Encoder.
+        async extractFeatures(message) {
+          let combinedMessage = message;
+          return new Promise(async (resolve) => {
+            if (useModel) {
+              try {
+                const embedding = await useModel.embed(combinedMessage);
+                const embArray = await embedding.array();
+                // Store embedding for later context retrieval.
+                memoryModule.addMemory(embArray[0], combinedMessage);
+                embedding.dispose();
+                resolve(embArray[0]);
+              } catch (err) {
+                console.error("Error in USE embedding:", err);
+                const fallback = Array(512).fill(0);
+                fallback[0] = combinedMessage.length / 100;
+                resolve(fallback);
+              }
+            } else {
+              const fallback = Array(512).fill(0);
+              fallback[0] = combinedMessage.length / 100;
+              resolve(fallback);
+            }
+          });
         }
-        // Epsilon-greedy action selection.
         decideAction(features) {
           let action;
           if (Math.random() < this.epsilon) {
@@ -449,21 +556,24 @@
           }
           return action;
         }
-        // Process message and store experience.
+        // Process a message: extract features, decide action, store experience.
         async step(message) {
-          const features = this.extractFeatures(message);
+          const features = await this.extractFeatures(message);
           const action = this.decideAction(features);
-          this.exp.push({ state: features, action, reward: calculateReward(message, action), nextState: features, done: false });
-          if (this.exp.length > 128) await this.learn();
+          const reward = calculateReward(message, action);
+          const experience = { state: features, action: action, reward: reward, nextState: features, done: false };
+          this.exp.push(experience);
+          this.priorityBuffer.add(experience);
+          if (this.priorityBuffer.size() > 64) await this.learn();
           if (this.epsilon > 0.05) this.epsilon *= this.epsilonDecay;
           this.stepCount++;
           updateStepDisplay(this.stepCount);
           return { action, features };
         }
-        // Learn using Double DQN update.
+        // Learn using Double DQN update with prioritized experience replay.
         async learn() {
           const batchSize = 64;
-          const batch = this.exp.slice(-batchSize);
+          const batch = this.priorityBuffer.sample(batchSize);
           const states = batch.map(e => e.state);
           const actions = batch.map(e => e.action);
           const rewards = batch.map(e => e.reward);
@@ -486,10 +596,20 @@
             const loss = info.history.loss[0];
             this.lossHistory.push(loss);
             this.lossData.push(loss);
+            // Maintain a window for loss variance.
+            this.lossVarianceWindow.push(loss);
+            if (this.lossVarianceWindow.length > 5) this.lossVarianceWindow.shift();
+            const meanLoss = this.lossVarianceWindow.reduce((a, b) => a + b, 0) / this.lossVarianceWindow.length;
+            const variance = this.lossVarianceWindow.reduce((sum, l) => sum + Math.pow(l - meanLoss, 2), 0) / this.lossVarianceWindow.length;
+            // Adjust learning rate based on variance.
+            if (variance > 0.01) {
+              this.learningRate *= 0.98;
+            } else {
+              this.learningRate *= 1.01;
+            }
+            this.model.optimizer.learningRate = this.learningRate;
             lossDisplay.textContent = "Loss: " + loss.toFixed(4);
             updateLossChart(this.lossData);
-            if (loss > 0.1) this.learningRate *= 0.98; else this.learningRate *= 1.02;
-            this.model.optimizer.learningRate = this.learningRate;
             if (this.stepCount % 100 === 0) {
               const tau = 0.1;
               const weights = this.model.getWeights();
@@ -504,7 +624,6 @@
             tf.dispose([sT, nsT, currQ, nextTargetQ, nextMainQ, target]);
           }
         }
-        // Extra training routine.
         trainExtra() {
           for (let i = 0; i < 100; i++) {
             this.step("dummy");
@@ -551,18 +670,30 @@
         }
       };
 
+      // Deep Seek functionality using advanced memory retrieval.
+      async function deepSeek() {
+        const query = prompt("Enter your deep seek query:");
+        if (!query) return;
+        const result = await memoryModule.searchMemory(query);
+        appendMessage("DeepSeek", result ? "Most similar context: " + result : "No similar context found.");
+      }
+
       // Handle incoming user message.
       async function handleMessage() {
         const message = userInput.value.trim();
         if (!message) return;
         appendMessage("User", message);
+        conversationHistory.push("User: " + message);
         userInput.value = "";
+        // Use the last 3 messages as context.
+        const contextMessage = conversationHistory.slice(-3).join(" ");
         try {
-          const result = await commander.step(message);
+          const result = await commander.step(contextMessage);
           const action = result.action;
           const features = result.features;
           const response = await getResponse(action);
           appendMessage("Chatbot", response, features);
+          conversationHistory.push("Chatbot: " + response);
         } catch (error) {
           console.error("Error processing message:", error);
           appendMessage("Chatbot", "Sorry, I encountered an error and could not respond.");
@@ -577,13 +708,13 @@
         if (e.key === "Enter") handleMessage();
       });
 
-      // Pre-training routine.
+      // Pre-training routine with sample messages.
       async function preTrainChatbot() {
         const inputs = [];
         const labels = [];
         for (let i = 0; i < 500; i++) {
           const text = "sample message " + i;
-          const features = commander.extractFeatures(text);
+          const features = await commander.extractFeatures(text);
           const action = Math.floor(Math.random() * responses.length);
           const labelVec = Array(responses.length).fill(0);
           labelVec[action] = 1;
@@ -605,13 +736,12 @@
       }
       preTrainChatbot();
 
-      // Background training every 30 seconds.
+      // Background training and performance updates.
       setInterval(() => {
         commander.trainExtra();
         updatePerformancePanel();
       }, 30000);
 
-      // Every 20 seconds, fetch random API data for background training.
       setInterval(async () => {
         const quote = await fetchQuote();
         if (quote && !quote.startsWith("Error")) {
@@ -637,7 +767,7 @@
 
       updatePerformancePanel();
 
-      // Auto-backup model and metrics every 60 seconds.
+      // Auto-backup model and performance metrics every 60 seconds.
       setInterval(async () => {
         try {
           await commander.model.save('localstorage://backup-model');
@@ -653,7 +783,6 @@
         }
       }, 60000);
 
-      // On startup, load backup if available.
       (async function loadBackup() {
         try {
           const backupModel = await tf.loadLayersModel('localstorage://backup-model');
@@ -670,8 +799,15 @@
         }
       })();
 
-      updatePerformancePanel();
+      // Dynamically update the DALL·E image using an AI art query from Unsplash.
+      function updateDalleImage() {
+        const dalleImg = document.getElementById("dalleImage");
+        dalleImg.src = "https://source.unsplash.com/320x200/?ai,art&" + Date.now();
+      }
+      setInterval(updateDalleImage, 60000);
+      updateDalleImage();
 
+      updatePerformancePanel();
     })();
   </script>
 </body>
