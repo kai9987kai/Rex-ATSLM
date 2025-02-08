@@ -82,7 +82,7 @@
     #controls {
       top: 1rem;
       right: 1rem;
-      width: 320px;
+      width: 360px;
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 0.5rem;
@@ -91,8 +91,13 @@
       grid-column: span 2;
       background: #d9534f;
     }
+    /* New innovation buttons */
+    #controls button.extraBtn {
+      grid-column: span 1;
+      background: #5cb85c;
+    }
     #infoPanel {
-      top: 350px;
+      top: 400px;
       right: 1rem;
       width: 320px;
     }
@@ -145,6 +150,9 @@
     <button onclick="document.getElementById('modelUpload').click()">Import Model</button>
     <button onclick="deepSeek()">Deep Seek</button>
     <button class="resetBtn" onclick="resetModel()">Reset Model</button>
+    <!-- New innovation buttons -->
+    <button class="extraBtn" onclick="showMemory()">Show Memory</button>
+    <button class="extraBtn" onclick="saveChat()">Save Chat</button>
     <input type="file" id="modelUpload" style="display:none" accept=".json,.bin">
   </div>
   <div id="infoPanel">
@@ -161,6 +169,9 @@
     // Global conversation history and research-driven memory module.
     let conversationHistory = [];
     let useModel = null;
+    // Global feedback counters.
+    let totalFeedback = 0, positiveFeedback = 0, negativeFeedback = 0;
+
     // AdvancedMemoryModule stores conversation embeddings for retrieval.
     class AdvancedMemoryModule {
       constructor() {
@@ -226,7 +237,7 @@
       return dot / (Math.sqrt(normA) * Math.sqrt(normB) + 1e-8);
     }
 
-    // Load Universal Sentence Encoder for advanced natural language embeddings.
+    // Load Universal Sentence Encoder.
     (async function loadUSE() {
       try {
         useModel = await use.load();
@@ -381,20 +392,33 @@
         const msgElem = document.createElement("div");
         msgElem.style.marginBottom = "10px";
         msgElem.innerHTML = `<strong>${sender}:</strong> ${message}`;
+        // If the message is from Chatbot and includes feature info, add thumbs up/down buttons.
         if (sender === "Chatbot" && features) {
           const upBtn = document.createElement("button");
           upBtn.textContent = "👍";
           upBtn.classList.add("feedbackBtn");
-          upBtn.addEventListener("click", () => recordFeedback(features, true));
+          upBtn.addEventListener("click", (e) => {
+            // Disable both buttons to prevent multiple feedback submissions.
+            disableFeedbackButtons(e.target.parentElement);
+            recordFeedback(e, features, true);
+          });
           const downBtn = document.createElement("button");
           downBtn.textContent = "👎";
           downBtn.classList.add("feedbackBtn");
-          downBtn.addEventListener("click", () => recordFeedback(features, false));
+          downBtn.addEventListener("click", (e) => {
+            disableFeedbackButtons(e.target.parentElement);
+            recordFeedback(e, features, false);
+          });
           msgElem.appendChild(upBtn);
           msgElem.appendChild(downBtn);
         }
         chatLog.appendChild(msgElem);
         chatLog.scrollTop = chatLog.scrollHeight;
+      }
+      // Disable any feedback buttons contained within the message element.
+      function disableFeedbackButtons(parentElem) {
+        const btns = parentElem.querySelectorAll("button.feedbackBtn");
+        btns.forEach(btn => btn.disabled = true);
       }
       function argmax(arr) {
         let maxIndex = 0, maxValue = arr[0];
@@ -412,12 +436,23 @@
         if (action >= 2) reward += 0.5;
         return reward;
       }
-      function recordFeedback(features, isPositive) {
+      // Updated recordFeedback now receives the event so it can disable its buttons,
+      // update global counters, and then trigger extra training.
+      function recordFeedback(e, features, isPositive) {
         const feedbackReward = isPositive ? 5 : -5;
         commander.exp.push({ state: features, action: 0, reward: feedbackReward, nextState: features, done: false });
         commander.priorityBuffer.add({ state: features, action: 0, reward: feedbackReward, nextState: features, done: false });
+        totalFeedback++;
+        if (isPositive) {
+          positiveFeedback++;
+        } else {
+          negativeFeedback++;
+        }
         logEvent("Feedback recorded: " + (isPositive ? "👍" : "👎"));
+        // Trigger additional training (as before).
         commander.trainExtra();
+        // Update performance panel to reflect feedback statistics.
+        updatePerformancePanel();
       }
       function updateStepDisplay(steps) {
         stepBar.textContent = "Steps: " + steps;
@@ -428,7 +463,10 @@
         lossChart.update();
       }
       function updatePerformancePanel() {
-        performancePanel.innerHTML = `Steps: ${commander.stepCount} | Epsilon: ${commander.epsilon.toFixed(3)}`;
+        performancePanel.innerHTML = `
+          Steps: ${commander.stepCount} | Epsilon: ${commander.epsilon.toFixed(3)}<br>
+          Feedback: ${positiveFeedback} 👍, ${negativeFeedback} 👎 (Total: ${totalFeedback})
+        `;
       }
       function logEvent(msg) {
         console.log("[CHAT LOG]:", msg);
@@ -469,7 +507,6 @@
           const depth = Math.floor(tokenDim / numHeads);
           const headOutputs = [];
           for (let i = 0; i < numHeads; i++) {
-            // Determine output shape for slicing:
             const inputShape = inputTensor.shape; // expected [batch, tokens, tokenDim]
             const tokens = inputShape[1] || 8;
             const sliceOutputShape = [inputShape[0] || null, tokens, depth];
@@ -525,7 +562,7 @@
               try {
                 const embedding = await useModel.embed(combinedMessage);
                 const embArray = await embedding.array();
-                // Store embedding for later context retrieval.
+                // Store embedding for context retrieval.
                 memoryModule.addMemory(embArray[0], combinedMessage);
                 embedding.dispose();
                 resolve(embArray[0]);
@@ -596,12 +633,10 @@
             const loss = info.history.loss[0];
             this.lossHistory.push(loss);
             this.lossData.push(loss);
-            // Maintain a window for loss variance.
             this.lossVarianceWindow.push(loss);
             if (this.lossVarianceWindow.length > 5) this.lossVarianceWindow.shift();
             const meanLoss = this.lossVarianceWindow.reduce((a, b) => a + b, 0) / this.lossVarianceWindow.length;
             const variance = this.lossVarianceWindow.reduce((sum, l) => sum + Math.pow(l - meanLoss, 2), 0) / this.lossVarianceWindow.length;
-            // Adjust learning rate based on variance.
             if (variance > 0.01) {
               this.learningRate *= 0.98;
             } else {
@@ -676,6 +711,26 @@
         if (!query) return;
         const result = await memoryModule.searchMemory(query);
         appendMessage("DeepSeek", result ? "Most similar context: " + result : "No similar context found.");
+      }
+
+      // Save chat history to a text file.
+      function saveChat() {
+        const chatText = conversationHistory.join("\n");
+        const blob = new Blob([chatText], { type: "text/plain" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "chat_history.txt";
+        link.click();
+      }
+
+      // Show the last 10 memory texts.
+      function showMemory() {
+        if (memoryModule.memories.length === 0) {
+          alert("No memory stored yet.");
+        } else {
+          const recentMemory = memoryModule.memories.slice(-10).map(m => m.text).join("\n");
+          alert("Recent Memory:\n" + recentMemory);
+        }
       }
 
       // Handle incoming user message.
